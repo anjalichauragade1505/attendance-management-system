@@ -28,7 +28,7 @@ pipeline {
 
     // ── Environment Variables ──────────────────────────────────
     environment {
-        AWS_REGION          = 'us-east-1'
+        AWS_REGION          = 'eu-north-1'
         AWS_ACCOUNT_ID      = credentials('AWS_ACCOUNT_ID')
         ECR_REPO_NAME       = 'attendance-management-system'
         ECR_REGISTRY        = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
