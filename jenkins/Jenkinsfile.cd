@@ -106,7 +106,7 @@ pipeline {
                         echo "Fetching EC2 instances from Target Group: ${env.TARGET_GROUP_NAME}"
 
                         // Get Target Group ARN
-                        def tgArn = sh(
+                        def tgArn = bat(
                             returnStdout: true,
                             script: """
                                 aws elbv2 describe-target-groups \
@@ -120,7 +120,7 @@ pipeline {
                         env.TARGET_GROUP_ARN = tgArn
 
                         // Get instance IDs registered in the Target Group
-                        def instanceIds = sh(
+                        def instanceIds = bat(
                             returnStdout: true,
                             script: """
                                 aws elbv2 describe-target-health \
@@ -137,7 +137,7 @@ pipeline {
                         def ips = []
 
                         instanceList.each { instanceId ->
-                            def ip = sh(
+                            def ip = bat(
                                 returnStdout: true,
                                 script: """
                                     aws ec2 describe-instances \
