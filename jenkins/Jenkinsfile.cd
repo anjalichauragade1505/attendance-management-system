@@ -106,29 +106,24 @@ pipeline {
                         echo "Fetching EC2 instances from Target Group: ${env.TARGET_GROUP_NAME}"
 
                         // Get Target Group ARN
-                        def tgArn = bat(
-                            returnStdout: true,
-                            script: """
-                                aws elbv2 describe-target-groups \
-                                    --names ${env.TARGET_GROUP_NAME} \
-                                    --query 'TargetGroups[0].TargetGroupArn' \
-                                    --output text
-                            """
-                        ).trim()
+                      def tgArn = bat(
+                               returnStdout: true,
+                                script: """
+                                @echo off
+                        aws elbv2 describe-target-groups --names attendance-prod-tg --query "TargetGroups[0].TargetGroupArn" --output text
+                                       """
+                      ).trim().split('\\r?\\n')[-1]
 
                         echo "Target Group ARN: ${tgArn}"
                         env.TARGET_GROUP_ARN = tgArn
 
-                        // Get instance IDs registered in the Target Group
-                        def instanceIds = bat(
-                            returnStdout: true,
-                            script: """
-                                aws elbv2 describe-target-health \
-                                    --target-group-arn ${tgArn} \
-                                    --query 'TargetHealthDescriptions[*].Target.Id' \
-                                    --output text
-                            """
-                        ).trim()
+                       def instanceIds = bat(
+    returnStdout: true,
+    script: """
+@echo off
+aws elbv2 describe-target-health --target-group-arn ${tgArn} --query "TargetHealthDescriptions[*].Target.Id" --output text
+"""
+).trim().split('\\r?\\n')[-1]
 
                         echo "Instance IDs in Target Group: ${instanceIds}"
 
