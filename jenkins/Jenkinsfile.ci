@@ -1,6 +1,8 @@
 pipeline {
     agent any
-
+     tools {
+        maven 'Maven'
+    }
     environment {
         AWS_REGION     = 'eu-north-1'
         AWS_ACCOUNT_ID = credentials('AWS_ACCOUNT_ID')
