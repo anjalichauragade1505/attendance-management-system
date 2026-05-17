@@ -132,15 +132,16 @@ aws elbv2 describe-target-health --target-group-arn ${tgArn} --query "TargetHeal
                         def ips = []
 
                         instanceList.each { instanceId ->
-                            def ip = bat(
-                                returnStdout: true,
-                                script: """
-                                    aws ec2 describe-instances \
-                                        --instance-ids ${instanceId} \
-                                        --query 'Reservations[0].Instances[0].PrivateIpAddress' \
-                                        --output text
-                                """
-                            ).trim()
+                           def ip = bat(
+    returnStdout: true,
+    script: """
+@echo off
+aws ec2 describe-instances ^
+--instance-ids ${instanceId} ^
+--query "Reservations[0].Instances[0].PrivateIpAddress" ^
+--output text
+"""
+).trim().split('\\r?\\n')[-1]
                             ips.add(ip)
                             echo "Instance ${instanceId} → IP: ${ip}"
                         }
