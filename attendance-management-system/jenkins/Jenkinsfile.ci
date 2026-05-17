@@ -1,234 +1,121 @@
-// =============================================================
-// PHASE 1: BUILD PIPELINE (CI) - Jenkinsfile.ci
-// Attendance Management System
-// =============================================================
-
 pipeline {
     agent any
 
-    // ── Environment Variables ──────────────────────────────────
     environment {
-        // AWS Configuration - set these in Jenkins Credentials
-        AWS_REGION          = 'us-east-1'
-        AWS_ACCOUNT_ID      = credentials('AWS_ACCOUNT_ID')     // Jenkins secret text
+        AWS_REGION          = 'eu-north-1'
+        AWS_ACCOUNT_ID      = credentials('AWS_ACCOUNT_ID')
         ECR_REPO_NAME       = 'attendance-management-system'
         ECR_REGISTRY        = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
-        IMAGE_TAG           = "${BUILD_NUMBER}"                  // Tag with Jenkins build number
+        IMAGE_TAG           = "${BUILD_NUMBER}"
         FULL_IMAGE_NAME     = "${ECR_REGISTRY}/${ECR_REPO_NAME}:${IMAGE_TAG}"
-
-        // Email Configuration
-        INITIATOR_EMAIL     = "${currentBuild.getBuildCauses()[0]?.userId ? \
-                               currentBuild.getBuildCauses()[0].userId + '@yourcompany.com' : \
-                               'devops-team@yourcompany.com'}"
-
-        // Maven Options
-        MAVEN_OPTS          = '-Xmx1024m'
     }
 
-    // ── Triggers ───────────────────────────────────────────────
     triggers {
-        // GitHub Webhook trigger - fires on every push
         githubPush()
     }
 
-    // ── Pipeline Options ───────────────────────────────────────
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
         timeout(time: 30, unit: 'MINUTES')
-        disableConcurrentBuilds()
     }
 
-    // ── Stages ─────────────────────────────────────────────────
     stages {
 
-        // STAGE 1: Checkout source code
         stage('Checkout') {
             steps {
                 echo "============================================"
                 echo " BUILD #${BUILD_NUMBER} STARTED"
                 echo " Branch: ${GIT_BRANCH}"
-                echo " Commit: ${GIT_COMMIT}"
                 echo "============================================"
                 checkout scm
             }
         }
 
-        // STAGE 2: Run unit tests
         stage('Test') {
             steps {
                 echo "Running unit tests with Maven..."
-                sh 'mvn test -B'
+                bat 'mvn test -B'
             }
             post {
                 always {
-                    // Publish JUnit test results
-                    junit '**/target/surefire-reports/*.xml'
-
-                    // Publish test coverage (optional - requires JaCoCo plugin)
-                    // jacoco(execPattern: 'target/jacoco.exec')
+                    junit allowEmptyResults: true, testResults: '**/target/surefire-reports/*.xml'
                 }
             }
         }
 
-        // STAGE 3: Build the Maven artifact
         stage('Build JAR') {
             steps {
                 echo "Building Spring Boot JAR..."
-                sh 'mvn clean package -DskipTests -B'
+                bat 'mvn clean package -DskipTests -B'
                 echo "JAR built successfully."
-                sh 'ls -lh target/*.jar'
             }
         }
 
-        // STAGE 4: Build Docker image
         stage('Build Docker Image') {
             steps {
-                echo "Building Docker image: ${FULL_IMAGE_NAME}"
-                sh """
-                    docker build \
-                        --build-arg BUILD_NUMBER=${BUILD_NUMBER} \
-                        --tag ${FULL_IMAGE_NAME} \
-                        --tag ${ECR_REGISTRY}/${ECR_REPO_NAME}:latest \
-                        .
-                """
+                echo "Building Docker image..."
+                bat "docker build --tag ${FULL_IMAGE_NAME} --tag ${ECR_REGISTRY}/${ECR_REPO_NAME}:latest ."
                 echo "Docker image built successfully."
             }
         }
 
-        // STAGE 5: Push to Amazon ECR
         stage('Push to ECR') {
             steps {
                 withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                     script {
                         echo "Logging in to Amazon ECR..."
-                        sh """
-                            aws ecr get-login-password --region ${AWS_REGION} | \
-                            docker login \
-                                --username AWS \
-                                --password-stdin \
-                                ${ECR_REGISTRY}
+                        bat """
+                            aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
                         """
-
-                        echo "Pushing image: ${FULL_IMAGE_NAME}"
-                        sh "docker push ${FULL_IMAGE_NAME}"
-
-                        echo "Pushing latest tag..."
-                        sh "docker push ${ECR_REGISTRY}/${ECR_REPO_NAME}:latest"
-
-                        echo "Image pushed to ECR successfully!"
-                        echo "ECR Image URI: ${FULL_IMAGE_NAME}"
+                        echo "Pushing image to ECR..."
+                        bat "docker push ${FULL_IMAGE_NAME}"
+                        bat "docker push ${ECR_REGISTRY}/${ECR_REPO_NAME}:latest"
+                        echo "Image pushed successfully: ${FULL_IMAGE_NAME}"
                     }
                 }
             }
         }
 
-        // STAGE 6: Clean up local Docker images (save disk space)
         stage('Cleanup') {
             steps {
                 echo "Cleaning up local Docker images..."
-                sh """
-                    docker rmi ${FULL_IMAGE_NAME} || true
-                    docker rmi ${ECR_REGISTRY}/${ECR_REPO_NAME}:latest || true
-                    docker system prune -f || true
-                """
+                bat "docker rmi ${FULL_IMAGE_NAME} || exit 0"
+                bat "docker rmi ${ECR_REGISTRY}/${ECR_REPO_NAME}:latest || exit 0"
             }
         }
     }
 
-    // ── Post-Build Actions (Notifications) ─────────────────────
     post {
-
         success {
-            echo "✅ BUILD SUCCEEDED - Build #${BUILD_NUMBER}"
+            echo "BUILD SUCCEEDED - Build #${BUILD_NUMBER}"
             emailext(
-                to: "${INITIATOR_EMAIL}",
-                subject: "✅ [SUCCESS] Attendance System - Build #${BUILD_NUMBER}",
+                to: "anjalichauragade1505@gmail.com",
+                subject: "SUCCESS - Attendance System Build #${BUILD_NUMBER}",
                 mimeType: 'text/html',
                 body: """
-                <html>
-                <body style="font-family: Arial, sans-serif; padding: 20px;">
-                    <h2 style="color: #27ae60;">✅ Build Successful</h2>
-                    <hr/>
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Project</b></td>
-                            <td style="padding:8px;">Attendance Management System</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>Build Number</b></td>
-                            <td style="padding:8px;">#${BUILD_NUMBER}</td>
-                        </tr>
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Branch</b></td>
-                            <td style="padding:8px;">${GIT_BRANCH}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>Commit</b></td>
-                            <td style="padding:8px;">${GIT_COMMIT}</td>
-                        </tr>
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>ECR Image</b></td>
-                            <td style="padding:8px;">${FULL_IMAGE_NAME}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>Duration</b></td>
-                            <td style="padding:8px;">${currentBuild.durationString}</td>
-                        </tr>
-                    </table>
-                    <br/>
-                    <p>🚀 Image is ready for deployment. Use Build Number <b>#${BUILD_NUMBER}</b> in the Deploy Pipeline.</p>
-                    <p><a href="${BUILD_URL}" style="background:#27ae60;color:white;padding:10px 20px;text-decoration:none;border-radius:4px;">View Build Logs</a></p>
-                </body>
-                </html>
+                <h2 style='color:green'>Build Successful!</h2>
+                <p><b>Build Number:</b> #${BUILD_NUMBER}</p>
+                <p><b>Branch:</b> ${GIT_BRANCH}</p>
+                <p><b>ECR Image:</b> ${FULL_IMAGE_NAME}</p>
+                <p><b>Duration:</b> ${currentBuild.durationString}</p>
+                <p><a href='${BUILD_URL}'>View Build Logs</a></p>
                 """
             )
         }
-
         failure {
-            echo "❌ BUILD FAILED - Build #${BUILD_NUMBER}"
+            echo "BUILD FAILED - Build #${BUILD_NUMBER}"
             emailext(
-                to: "${INITIATOR_EMAIL}",
-                subject: "❌ [FAILED] Attendance System - Build #${BUILD_NUMBER}",
+                to: "anjalichauragade1505@gmail.com",
+                subject: "FAILED - Attendance System Build #${BUILD_NUMBER}",
                 mimeType: 'text/html',
                 body: """
-                <html>
-                <body style="font-family: Arial, sans-serif; padding: 20px;">
-                    <h2 style="color: #e74c3c;">❌ Build Failed</h2>
-                    <hr/>
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Project</b></td>
-                            <td style="padding:8px;">Attendance Management System</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>Build Number</b></td>
-                            <td style="padding:8px;">#${BUILD_NUMBER}</td>
-                        </tr>
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Branch</b></td>
-                            <td style="padding:8px;">${GIT_BRANCH}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>Commit</b></td>
-                            <td style="padding:8px;">${GIT_COMMIT}</td>
-                        </tr>
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Failed Stage</b></td>
-                            <td style="padding:8px; color:#e74c3c;">${currentBuild.result}</td>
-                        </tr>
-                    </table>
-                    <br/>
-                    <p>⚠️ Please investigate and fix the build failure.</p>
-                    <p><a href="${BUILD_URL}console" style="background:#e74c3c;color:white;padding:10px 20px;text-decoration:none;border-radius:4px;">View Console Output</a></p>
-                </body>
-                </html>
+                <h2 style='color:red'>Build Failed!</h2>
+                <p><b>Build Number:</b> #${BUILD_NUMBER}</p>
+                <p><b>Branch:</b> ${GIT_BRANCH}</p>
+                <p><a href='${BUILD_URL}console'>View Console Output</a></p>
                 """
             )
-        }
-
-        always {
-            echo "Build #${BUILD_NUMBER} completed with status: ${currentBuild.currentResult}"
         }
     }
 }
