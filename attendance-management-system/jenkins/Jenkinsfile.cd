@@ -1,191 +1,184 @@
+
 // =============================================================
 // PHASE 2 & 3: DEPLOY PIPELINE (CD) - Jenkinsfile.cd
-// Attendance Management System
-// Supports: Staging & Production with ALB + 2 EC2 instances
+// WINDOWS JENKINS COMPATIBLE VERSION
 // =============================================================
 
 pipeline {
     agent any
 
-    // ── Input Parameters ───────────────────────────────────────
     parameters {
         choice(
             name: 'ENVIRONMENT',
             choices: ['Staging', 'Production'],
             description: 'Target deployment environment'
         )
+
         string(
             name: 'BUILD_NUMBER_TO_DEPLOY',
             defaultValue: '',
-            description: 'Jenkins Build Number from CI pipeline (e.g. 42). This selects the specific ECR image version.'
+            description: 'CI build number to deploy'
         )
+
         booleanParam(
             name: 'ROLLBACK',
             defaultValue: false,
-            description: 'Set to true to rollback to previous working version'
+            description: 'Rollback deployment'
         )
     }
 
-    // ── Environment Variables ──────────────────────────────────
     environment {
-        AWS_REGION          = 'us-east-1'
-        AWS_ACCOUNT_ID      = credentials('AWS_ACCOUNT_ID')
-        ECR_REPO_NAME       = 'attendance-management-system'
-        ECR_REGISTRY        = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+        AWS_REGION      = 'us-east-1'
+        AWS_ACCOUNT_ID  = credentials('AWS_ACCOUNT_ID')
+        ECR_REPO_NAME   = 'attendance-management-system'
+        ECR_REGISTRY    = "${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
 
-        // Derive image tag from parameter
-        IMAGE_TAG           = "${params.BUILD_NUMBER_TO_DEPLOY}"
-        FULL_IMAGE_NAME     = "${ECR_REGISTRY}/${ECR_REPO_NAME}:${IMAGE_TAG}"
+        IMAGE_TAG       = "${params.BUILD_NUMBER_TO_DEPLOY}"
+        FULL_IMAGE_NAME = "${ECR_REGISTRY}/${ECR_REPO_NAME}:${IMAGE_TAG}"
 
-        // Container config
-        CONTAINER_NAME      = 'attendance-app'
-        APP_PORT            = '8080'
-        HOST_PORT           = '80'
+        CONTAINER_NAME  = 'attendance-app'
+        APP_PORT        = '8080'
+        HOST_PORT       = '80'
 
-        // SSH Key credential stored in Jenkins
-        SSH_KEY_ID          = 'ec2-ssh-key'
-
-        // EC2 Instance IPs - set per environment
-        // These are fetched dynamically via AWS CLI in the pipeline
-        EC2_USER            = 'ec2-user'
-
-        // Email
-        INITIATOR_EMAIL     = "${currentBuild.getBuildCauses()[0]?.userId ? \
-                               currentBuild.getBuildCauses()[0].userId + '@yourcompany.com' : \
-                               'devops-team@yourcompany.com'}"
+        SSH_KEY_ID      = 'ec2-ssh-key'
+        EC2_USER        = 'ec2-user'
     }
 
-    // ── Pipeline Options ───────────────────────────────────────
     options {
         buildDiscarder(logRotator(numToKeepStr: '10'))
         timestamps()
         timeout(time: 20, unit: 'MINUTES')
     }
 
-    // ── Stages ─────────────────────────────────────────────────
     stages {
 
-        // STAGE 1: Validate inputs
+        // =====================================================
+        // VALIDATE PARAMETERS
+        // =====================================================
+
         stage('Validate Parameters') {
             steps {
                 script {
-                    echo "============================================"
-                    echo " DEPLOY PIPELINE STARTED"
-                    echo " Environment : ${params.ENVIRONMENT}"
-                    echo " Build Tag   : ${params.BUILD_NUMBER_TO_DEPLOY}"
-                    echo " Image       : ${FULL_IMAGE_NAME}"
-                    echo "============================================"
+                    echo "===================================="
+                    echo "DEPLOY PIPELINE STARTED"
+                    echo "Environment : ${params.ENVIRONMENT}"
+                    echo "Build Tag   : ${params.BUILD_NUMBER_TO_DEPLOY}"
+                    echo "Image       : ${FULL_IMAGE_NAME}"
+                    echo "===================================="
 
                     if (!params.BUILD_NUMBER_TO_DEPLOY?.trim()) {
-                        error("❌ BUILD_NUMBER_TO_DEPLOY parameter is required! Provide the CI build number.")
+                        error('BUILD_NUMBER_TO_DEPLOY is required!')
                     }
 
-                    // Set environment-specific variables
                     if (params.ENVIRONMENT == 'Production') {
-                        env.TARGET_GROUP_NAME  = 'attendance-prod-tg'
-                        env.ALB_NAME           = 'attendance-prod-alb'
-                        env.SPRING_PROFILE     = 'production'
-                        env.HOST_PORT          = '80'
-                    } else {
-                        env.TARGET_GROUP_NAME  = 'attendance-staging-tg'
-                        env.ALB_NAME           = 'attendance-staging-alb'
-                        env.SPRING_PROFILE     = 'staging'
-                        env.HOST_PORT          = '80'
+                        env.TARGET_GROUP_NAME = 'attendance-prod-tg'
+                        env.ALB_NAME          = 'attendance-prod-alb'
+                        env.SPRING_PROFILE    = 'production'
+                    }
+                    else {
+                        env.TARGET_GROUP_NAME = 'attendance-staging-tg'
+                        env.ALB_NAME          = 'attendance-staging-alb'
+                        env.SPRING_PROFILE    = 'staging'
                     }
 
-                    echo "✅ Parameters validated. Deploying to ${params.ENVIRONMENT}"
+                    echo "Parameters validated successfully"
                 }
             }
         }
 
-        // STAGE 2: Fetch EC2 instance IPs from Target Group (Phase 3 - HA)
+        // =====================================================
+        // FETCH EC2 INSTANCES
+        // =====================================================
+
         stage('Fetch EC2 Instances') {
             steps {
                 withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                     script {
+
                         echo "Fetching EC2 instances from Target Group: ${env.TARGET_GROUP_NAME}"
 
-                        // Get Target Group ARN
-                        def tgArn = sh(
+                        def tgArn = bat(
                             returnStdout: true,
                             script: """
-                                aws elbv2 describe-target-groups \
-                                    --names ${env.TARGET_GROUP_NAME} \
-                                    --query 'TargetGroups[0].TargetGroupArn' \
-                                    --output text
-                            """
+@echo off
+aws elbv2 describe-target-groups ^
+--names ${env.TARGET_GROUP_NAME} ^
+--query "TargetGroups[0].TargetGroupArn" ^
+--output text
+"""
                         ).trim()
 
                         echo "Target Group ARN: ${tgArn}"
-                        env.TARGET_GROUP_ARN = tgArn
 
-                        // Get instance IDs registered in the Target Group
-                        def instanceIds = sh(
+                        def instanceIds = bat(
                             returnStdout: true,
                             script: """
-                                aws elbv2 describe-target-health \
-                                    --target-group-arn ${tgArn} \
-                                    --query 'TargetHealthDescriptions[*].Target.Id' \
-                                    --output text
-                            """
+@echo off
+aws elbv2 describe-target-health ^
+--target-group-arn ${tgArn} ^
+--query "TargetHealthDescriptions[*].Target.Id" ^
+--output text
+"""
                         ).trim()
 
-                        echo "Instance IDs in Target Group: ${instanceIds}"
+                        echo "Instance IDs: ${instanceIds}"
 
-                        // Convert instance IDs to private IPs
-                        def instanceList = instanceIds.split('\\s+')
+                        def instanceList = instanceIds.tokenize()
                         def ips = []
 
                         instanceList.each { instanceId ->
-                            def ip = sh(
+
+                            def ip = bat(
                                 returnStdout: true,
                                 script: """
-                                    aws ec2 describe-instances \
-                                        --instance-ids ${instanceId} \
-                                        --query 'Reservations[0].Instances[0].PrivateIpAddress' \
-                                        --output text
-                                """
+@echo off
+aws ec2 describe-instances ^
+--instance-ids ${instanceId} ^
+--query "Reservations[0].Instances[0].PrivateIpAddress" ^
+--output text
+"""
                             ).trim()
+
                             ips.add(ip)
-                            echo "Instance ${instanceId} → IP: ${ip}"
+                            echo "${instanceId} -> ${ip}"
                         }
 
                         env.EC2_INSTANCE_IPS = ips.join(',')
-                        echo "✅ Found ${ips.size()} EC2 instances: ${env.EC2_INSTANCE_IPS}"
+
+                        echo "EC2 IPs: ${env.EC2_INSTANCE_IPS}"
 
                         if (ips.size() < 1) {
-                            error("❌ No EC2 instances found in Target Group!")
+                            error('No EC2 instances found!')
                         }
                     }
                 }
             }
         }
 
-        // STAGE 3: Pull ECR image on both EC2 instances
+        // =====================================================
+        // PULL IMAGE FROM ECR
+        // =====================================================
+
         stage('Pull Image from ECR') {
             steps {
                 withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                     script {
+
                         def instances = env.EC2_INSTANCE_IPS.split(',')
 
                         instances.each { ip ->
-                            echo "📦 Pulling image on instance: ${ip}"
-                            sshagent(credentials: ["${SSH_KEY_ID}"]) {
-                                sh """
-                                    ssh -o StrictHostKeyChecking=no ${EC2_USER}@${ip} '
-                                        # Login to ECR
-                                        aws ecr get-login-password \
-                                            --region ${AWS_REGION} | \
-                                        docker login \
-                                            --username AWS \
-                                            --password-stdin \
-                                            ${ECR_REGISTRY}
 
-                                        # Pull specific image version
-                                        docker pull ${FULL_IMAGE_NAME}
-                                        echo "✅ Image pulled: ${FULL_IMAGE_NAME}"
-                                    '
-                                """
+                            echo "Pulling image on ${ip}"
+
+                            sshagent(credentials: ["${SSH_KEY_ID}"]) {
+
+                                bat """
+ssh -o StrictHostKeyChecking=no ${EC2_USER}@${ip} "
+aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+
+docker pull ${FULL_IMAGE_NAME}
+"
+"""
                             }
                         }
                     }
@@ -193,48 +186,47 @@ pipeline {
             }
         }
 
-        // STAGE 4: Rolling deploy - Instance 1
+        // =====================================================
+        // DEPLOY INSTANCE 1
+        // =====================================================
+
         stage('Deploy to Instance 1') {
             steps {
                 script {
+
                     def instances = env.EC2_INSTANCE_IPS.split(',')
                     def ip = instances[0]
-                    echo "🚀 Deploying to Instance 1: ${ip}"
+
+                    echo "Deploying to Instance 1: ${ip}"
 
                     sshagent(credentials: ["${SSH_KEY_ID}"]) {
-                        sh """
-                            ssh -o StrictHostKeyChecking=no ${EC2_USER}@${ip} '
-                                echo "Stopping existing container..."
-                                docker stop ${CONTAINER_NAME} 2>/dev/null || true
-                                docker rm   ${CONTAINER_NAME} 2>/dev/null || true
 
-                                echo "Starting new container: ${FULL_IMAGE_NAME}"
-                                docker run -d \
-                                    --name ${CONTAINER_NAME} \
-                                    --restart unless-stopped \
-                                    -p ${HOST_PORT}:${APP_PORT} \
-                                    -e SPRING_PROFILE=${SPRING_PROFILE} \
-                                    -e JAVA_OPTS="-Xmx512m -Xms256m" \
-                                    ${FULL_IMAGE_NAME}
+                        bat """
+ssh -o StrictHostKeyChecking=no ${EC2_USER}@${ip} "
+docker stop ${CONTAINER_NAME} || true
 
-                                echo "Waiting for app to start..."
-                                sleep 30
+docker rm ${CONTAINER_NAME} || true
 
-                                echo "Health check on Instance 1..."
-                                curl -sf http://localhost:${HOST_PORT}/attendance/status \
-                                    && echo "✅ Instance 1 healthy!" \
-                                    || (echo "❌ Health check FAILED on Instance 1" && exit 1)
+docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${APP_PORT} -e SPRING_PROFILE=${SPRING_PROFILE} -e JAVA_OPTS=-Xmx512m ${FULL_IMAGE_NAME}
 
-                                docker ps | grep ${CONTAINER_NAME}
-                            '
-                        """
+sleep 30
+
+curl -f http://localhost:${HOST_PORT}/attendance/status
+
+docker ps
+"
+"""
                     }
-                    echo "✅ Instance 1 deployment successful"
+
+                    echo "Instance 1 deployed successfully"
                 }
             }
         }
 
-        // STAGE 5: Rolling deploy - Instance 2 (Phase 3 - HA)
+        // =====================================================
+        // DEPLOY INSTANCE 2
+        // =====================================================
+
         stage('Deploy to Instance 2') {
             when {
                 expression {
@@ -242,183 +234,91 @@ pipeline {
                     return instances.size() > 1
                 }
             }
+
             steps {
                 script {
+
                     def instances = env.EC2_INSTANCE_IPS.split(',')
                     def ip = instances[1]
-                    echo "🚀 Deploying to Instance 2: ${ip}"
+
+                    echo "Deploying to Instance 2: ${ip}"
 
                     sshagent(credentials: ["${SSH_KEY_ID}"]) {
-                        sh """
-                            ssh -o StrictHostKeyChecking=no ${EC2_USER}@${ip} '
-                                echo "Stopping existing container..."
-                                docker stop ${CONTAINER_NAME} 2>/dev/null || true
-                                docker rm   ${CONTAINER_NAME} 2>/dev/null || true
 
-                                echo "Starting new container: ${FULL_IMAGE_NAME}"
-                                docker run -d \
-                                    --name ${CONTAINER_NAME} \
-                                    --restart unless-stopped \
-                                    -p ${HOST_PORT}:${APP_PORT} \
-                                    -e SPRING_PROFILE=${SPRING_PROFILE} \
-                                    -e JAVA_OPTS="-Xmx512m -Xms256m" \
-                                    ${FULL_IMAGE_NAME}
+                        bat """
+ssh -o StrictHostKeyChecking=no ${EC2_USER}@${ip} "
+docker stop ${CONTAINER_NAME} || true
 
-                                echo "Waiting for app to start..."
-                                sleep 30
+docker rm ${CONTAINER_NAME} || true
 
-                                echo "Health check on Instance 2..."
-                                curl -sf http://localhost:${HOST_PORT}/attendance/status \
-                                    && echo "✅ Instance 2 healthy!" \
-                                    || (echo "❌ Health check FAILED on Instance 2" && exit 1)
+docker run -d --name ${CONTAINER_NAME} --restart unless-stopped -p ${HOST_PORT}:${APP_PORT} -e SPRING_PROFILE=${SPRING_PROFILE} -e JAVA_OPTS=-Xmx512m ${FULL_IMAGE_NAME}
 
-                                docker ps | grep ${CONTAINER_NAME}
-                            '
-                        """
+sleep 30
+
+curl -f http://localhost:${HOST_PORT}/attendance/status
+
+docker ps
+"
+"""
                     }
-                    echo "✅ Instance 2 deployment successful"
+
+                    echo "Instance 2 deployed successfully"
                 }
             }
         }
 
-        // STAGE 6: Verify ALB routing (Phase 3 - HA)
+        // =====================================================
+        // VERIFY LOAD BALANCER
+        // =====================================================
+
         stage('Verify Load Balancer') {
             steps {
                 withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
                     script {
-                        echo "Fetching ALB DNS name..."
-                        def albDns = sh(
+
+                        def albDns = bat(
                             returnStdout: true,
                             script: """
-                                aws elbv2 describe-load-balancers \
-                                    --names ${env.ALB_NAME} \
-                                    --query 'LoadBalancers[0].DNSName' \
-                                    --output text
-                            """
+@echo off
+aws elbv2 describe-load-balancers ^
+--names ${env.ALB_NAME} ^
+--query "LoadBalancers[0].DNSName" ^
+--output text
+"""
                         ).trim()
 
                         env.ALB_DNS = albDns
+
                         echo "ALB DNS: ${albDns}"
 
-                        echo "Waiting for ALB health checks to pass..."
-                        sleep 30
+                        bat """
+@echo off
+curl -f http://${albDns}/attendance/status
+"""
 
-                        // Verify ALB routes to /attendance/status
-                        sh """
-                            echo "Testing ALB endpoint..."
-                            curl -sf http://${albDns}/attendance/status \
-                                && echo "✅ ALB routing verified!" \
-                                || echo "⚠️  ALB health check pending - targets may still be warming up"
-
-                            echo "Testing ALB check-in endpoint..."
-                            curl -sf -X POST \
-                                -H 'Content-Type: application/json' \
-                                -d '{"employeeId":"TEST001","employeeName":"Load Balancer Test","department":"QA"}' \
-                                http://${albDns}/attendance/checkin \
-                                && echo "✅ Check-in endpoint working via ALB!" \
-                                || echo "⚠️  Check-in test failed"
-                        """
-
-                        echo "✅ ALB DNS for ${params.ENVIRONMENT}: http://${albDns}"
+                        echo "Load balancer verified successfully"
                     }
                 }
             }
         }
     }
 
-    // ── Post-Deploy Notifications ──────────────────────────────
+    // =========================================================
+    // POST ACTIONS
+    // =========================================================
+
     post {
 
         success {
-            echo "✅ DEPLOYMENT SUCCEEDED to ${params.ENVIRONMENT}"
-            emailext(
-                to: "${INITIATOR_EMAIL}",
-                subject: "✅ [DEPLOYED] Attendance System → ${params.ENVIRONMENT} | Build #${params.BUILD_NUMBER_TO_DEPLOY}",
-                mimeType: 'text/html',
-                body: """
-                <html>
-                <body style="font-family: Arial, sans-serif; padding: 20px;">
-                    <h2 style="color: #27ae60;">✅ Deployment Successful</h2>
-                    <hr/>
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Project</b></td>
-                            <td style="padding:8px;">Attendance Management System</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>Environment</b></td>
-                            <td style="padding:8px; color:#27ae60;"><b>${params.ENVIRONMENT}</b></td>
-                        </tr>
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Build Number</b></td>
-                            <td style="padding:8px;">#${params.BUILD_NUMBER_TO_DEPLOY}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>Docker Image</b></td>
-                            <td style="padding:8px;">${FULL_IMAGE_NAME}</td>
-                        </tr>
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>EC2 Instances</b></td>
-                            <td style="padding:8px;">${env.EC2_INSTANCE_IPS}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>ALB Endpoint</b></td>
-                            <td style="padding:8px;"><a href="http://${env.ALB_DNS}/attendance/status">http://${env.ALB_DNS}</a></td>
-                        </tr>
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Duration</b></td>
-                            <td style="padding:8px;">${currentBuild.durationString}</td>
-                        </tr>
-                    </table>
-                    <br/>
-                    <h3>Verify Deployment:</h3>
-                    <ul>
-                        <li>Health Status: <a href="http://${env.ALB_DNS}/attendance/status">GET /attendance/status</a></li>
-                        <li>Check-in API: POST /attendance/checkin</li>
-                    </ul>
-                    <p><a href="${BUILD_URL}" style="background:#27ae60;color:white;padding:10px 20px;text-decoration:none;border-radius:4px;">View Pipeline Logs</a></p>
-                </body>
-                </html>
-                """
-            )
+            echo 'DEPLOYMENT SUCCESSFUL'
         }
 
         failure {
-            echo "❌ DEPLOYMENT FAILED to ${params.ENVIRONMENT}"
-            emailext(
-                to: "${INITIATOR_EMAIL}",
-                subject: "❌ [DEPLOY FAILED] Attendance System → ${params.ENVIRONMENT} | Build #${params.BUILD_NUMBER_TO_DEPLOY}",
-                mimeType: 'text/html',
-                body: """
-                <html>
-                <body style="font-family: Arial, sans-serif; padding: 20px;">
-                    <h2 style="color: #e74c3c;">❌ Deployment Failed</h2>
-                    <hr/>
-                    <table style="width:100%; border-collapse:collapse;">
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Project</b></td>
-                            <td style="padding:8px;">Attendance Management System</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>Environment</b></td>
-                            <td style="padding:8px; color:#e74c3c;"><b>${params.ENVIRONMENT}</b></td>
-                        </tr>
-                        <tr style="background:#f2f2f2;">
-                            <td style="padding:8px;"><b>Build Number</b></td>
-                            <td style="padding:8px;">#${params.BUILD_NUMBER_TO_DEPLOY}</td>
-                        </tr>
-                        <tr>
-                            <td style="padding:8px;"><b>EC2 Instances Targeted</b></td>
-                            <td style="padding:8px;">${env.EC2_INSTANCE_IPS}</td>
-                        </tr>
-                    </table>
-                    <br/>
-                    <p>⚠️ Deployment failed. Previous version may still be running. Check logs immediately.</p>
-                    <p><a href="${BUILD_URL}console" style="background:#e74c3c;color:white;padding:10px 20px;text-decoration:none;border-radius:4px;">View Console Output</a></p>
-                </body>
-                </html>
-                """
-            )
+            echo 'DEPLOYMENT FAILED'
+        }
+
+        always {
+            cleanWs()
         }
     }
 }
