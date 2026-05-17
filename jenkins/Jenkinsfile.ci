@@ -56,18 +56,23 @@ pipeline {
             }
         }
 
-        stage('Push to ECR') {
-            steps {
-                withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
-                    script {
-                        bat "aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}"
-                        bat "docker push ${FULL_IMAGE_NAME}"
-                        bat "docker push ${ECR_REGISTRY}/${ECR_REPO_NAME}:latest"
-                        echo "Image pushed: ${FULL_IMAGE_NAME}"
-                    }
-                }
+      stage('Push to ECR') {
+    steps {
+        withAWS(credentials: 'aws-credentials', region: "${AWS_REGION}") {
+            script {
+                // Windows-compatible ECR login
+                def loginCmd = bat(
+                    returnStdout: true,
+                    script: "@aws ecr get-login-password --region ${AWS_REGION}"
+                ).trim()
+                bat "docker login --username AWS --password \"${loginCmd}\" ${ECR_REGISTRY}"
+                bat "docker push ${FULL_IMAGE_NAME}"
+                bat "docker push ${ECR_REGISTRY}/${ECR_REPO_NAME}:latest"
+                echo "Image pushed: ${FULL_IMAGE_NAME}"
             }
         }
+    }
+}
 
         stage('Cleanup') {
             steps {
